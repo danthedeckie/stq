@@ -55,23 +55,8 @@ if [[ $? -ne 0 ]]; then
     exit 2
 fi
 
-# If no config.py, auto generate one:
-if [[ ! -f 'config.py' ]]; then
-    python .setup/make_initial_config_file.py > 'config.py'
-fi
-
 # setup standard hooks.
 if [[ ! -e ".git/hooks/pre-commit" ]]; then
-    cp .setup/hooks/pre-commit .git/hooks/pre-commit
+    cp .setup/pre-commit .git/hooks/pre-commit
 fi
 
-if [[ ! -f "database.db" ]]; then
-    echo "no database, so I'll make a default one"
-    echo "the main user is 'admin' and the password is 'password'."
-    echo "please change it!"
-    echo "make()" | ./db.py
-fi
-
-echo
-echo "--------------------------------------------------------"
-echo "Everything is done! You should be able to use ./run.sh to run the development server."
