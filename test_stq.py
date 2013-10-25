@@ -169,6 +169,88 @@ class Test_TaskQueue_tasks(BaseCaseClass_TaskQueue):
     def test_all_zeros(self):
         self.taskqueue.tasks(0, 0)
 
+class Test_TaskQueue_active_groups(BaseCaseClass_TaskQueue):
+    ''' Method docstring:
+    return a list of all groups currenly in the task list, and
+    how many tasks they each are running
+    ----------
+    Args: None
+    '''
+    def test_empty_args(self):
+        ''' if the db is empty, it should return an empty dict '''
+
+        self.assertEqual(self.taskqueue.active_groups(), {})
+
+    def test_with_single_task_with_one_group(self):
+        ''' only one task in the queue, and so it's ready to go! '''
+
+        self.taskqueue.save({u'name': u'stuff', u'group': u'group1'})
+
+        self.assertEqual(self.taskqueue.active_groups(),
+                         {u'group1': {u'ready': 1}})
+
+    def test_with_single_task_with_no_group(self):
+        ''' only one task in the queue, with no group,
+            so auto-assigned group none'''
+
+        self.taskqueue.save({u'name': u'stuff'})
+
+        self.assertEqual(self.taskqueue.active_groups(),
+                         {u'none': {u'ready': 1}})
+
+
+    def test_multiple_tasks_with_one_group(self):
+        ''' multiple tasks in one group, should be fine. '''
+
+        self.taskqueue.save({u'name': u'stuff', u'group': u'group1'})
+        self.taskqueue.save({u'name': u'stuff1', u'group': u'group1'})
+        self.taskqueue.save({u'name': u'stuff2', u'group': u'group1'})
+        self.taskqueue.save({u'name': u'stuff3', u'group': u'group1'})
+
+        self.assertEqual(self.taskqueue.active_groups(),
+                         {u'group1': {u'ready': 4}})
+
+
+    def test_multiple_tasks_with_one_group_different_states(self):
+        ''' multiple tasks in one group, but with different states '''
+
+        self.taskqueue.save({u'name': u'stuff', u'group': u'group1'})
+        self.taskqueue.save({u'name': u'stuff1', u'group': u'group1'})
+        self.taskqueue.save({u'name': u'stuff2', u'group': u'group1',
+                             u'state': u'failed'})
+        self.taskqueue.save({u'name': u'stuff3', u'group': u'group1'})
+
+        self.assertEqual(self.taskqueue.active_groups(),
+                         {u'group1': {u'ready': 3, u'failed': 1}})
+
+    def test_multiple_tasks_with_different_single_groups(self):
+        ''' multiple tasks in one group, should be fine. '''
+
+        self.taskqueue.save({u'name': u'stuff', u'group': u'group1'})
+        self.taskqueue.save({u'name': u'stuff1', u'group': u'group2'})
+        self.taskqueue.save({u'name': u'stuff2', u'group': u'group1'})
+        self.taskqueue.save({u'name': u'stuff3', u'group': u'group2'})
+
+        self.assertEqual(self.taskqueue.active_groups(),
+                         {u'group1': {u'ready': 2},
+                          u'group2': {u'ready': 2}})
+
+
+    def test_with_single_task_with_multiple_groups(self):
+        ''' only one task in the queue, but with multiple groups '''
+
+        self.taskqueue.save({u'name': u'stuff',
+                             u'group': [u'group1', u'group2']})
+
+        self.assertEqual(self.taskqueue.active_groups(),
+                         {u'group1': {u'ready': 1},
+                          u'group2': {u'ready': 1}})
+
+
+
+
+
+
 
 class Test_TaskQueue_getnexttask(BaseCaseClass_TaskQueue):
     ''' Method docstring:

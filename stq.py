@@ -30,6 +30,10 @@ from ConfigParser import SafeConfigParser
 
 from flufl.lock import Lock
 
+import json
+from collections import defaultdict
+from sqlite3 import OperationalError
+
 from dictlitestore import DictLiteStore
 
 valid_states = ('new', 'ready', 'running', 'done', 'failed', 'tmp', None)
@@ -169,7 +173,51 @@ class TaskQueue(object):
         return self.db.get(*q)
 
 
+    def active_groups(self):
+        ''' return a list of all groups currently in the task list, and how
+            many tasks they each are running '''
+
+        # grouplist looks like:
+        #
+        # dict[groupname] -> dict[state] -> count
+        # so you can do awesome things.
+
+        grouplist = defaultdict(lambda:defaultdict(lambda:0))
+
+        sql = u'SELECT Tasks."group", Tasks."state" From Tasks'
+
+        try:
+            rows = self.db.cur.execute(sql).fetchall()
+        except OperationalError as err:
+            # usually no such column, which means usually no rows.
+            rowcount = self.db.cur.execute(u'SELECT Count(id) FROM Tasks')
+            if rowcount.fetchone()[0] == 0:
+                return {}
+            else:
+                raise err
+
+        for rawgroups, rawstate in rows:
+
+            groups = json.loads(rawgroups)
+            state = json.loads(rawstate)
+
+            if isinstance(groups, list):
+                for g in groups:
+                    grouplist[g][state] += 1
+            else:
+                grouplist[groups][state] += 1
+
+        to_return = {}
+        for groupname in grouplist:
+            to_return[groupname] = dict(grouplist[groupname])
+
+        return to_return
+
+
+
+
     def getnexttask(self, group=None, new_state='running'):
+        ''' Get one available next task, as long as 'group' isn't overloaded '''
 
         if len(self.tasks(group, 'running')) \
                         < int(self.config.get(group, 'limit', 1)):
@@ -204,6 +252,9 @@ class TaskQueue(object):
 
         if not 'uid' in data:
             data['uid'] = uuid1().hex
+
+        if not 'group' in data:
+            data['group'] = 'none'
 
         # If output files are not absolute paths, then place them in the config
         # file specified logfile directory.
