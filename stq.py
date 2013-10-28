@@ -22,6 +22,11 @@
 
 '''
 
+import sys
+reload(sys)
+sys.setdefaultencoding('utf-8') # pylint: disable=no-member
+
+
 from os import makedirs
 from os.path import isdir, join as pathjoin, abspath
 from uuid import uuid1
@@ -136,6 +141,10 @@ class Config(object):
         else:
             return default
 
+    def groups(self):
+        ''' return a list of available groups '''
+        return [group for group in self.config.sections() if group != 'DIRS']
+
 
 ################################################################
 # Task Queue:
@@ -170,7 +179,7 @@ class TaskQueue(object):
         if state:
             q.append(('state', '==', state))
 
-        return self.db.get(*q)
+        return self.db.get(*q) # pylint: disable=W0142
 
 
     def active_groups(self):
@@ -192,7 +201,7 @@ class TaskQueue(object):
             # usually no such column, which means usually no rows.
             rowcount = self.db.cur.execute(u'SELECT Count(id) FROM Tasks')
             if rowcount.fetchone()[0] == 0:
-                return {}
+                return grouplist
             else:
                 raise err
 
@@ -207,44 +216,92 @@ class TaskQueue(object):
             else:
                 grouplist[groups][state] += 1
 
-        to_return = {}
-        for groupname in grouplist:
-            to_return[groupname] = dict(grouplist[groupname])
+        return grouplist
 
-        return to_return
+        ######################################
+        # If for some reason it would be better to return dicts
+        # rather than defaultdicts, then this is the code:
+        #
+        #to_return = {}
+        #for groupname in grouplist:
+        #    to_return[groupname] = dict(grouplist[groupname])
+
+        #return to_return
+
+    def grouplimit(self, groupname):
+        ''' how many tasks can be run at the same time in this group? '''
+
+        return int(self.config.get(groupname, 'limit', 1))
 
 
+    def _getnexttask(self, group, new_state='running'):
+        ''' get the next 'ready' task of this group. This should ONLY be called
+        by self.getnexttask, not by end users. getnexttask checks that limits
+        haven't been reached, etc. '''
+        try:
+            task = self.tasks(group, 'ready')[0]
+            if new_state:
+                task['state'] = new_state
+                self.db.update(task, False, ('uid', '==', task['uid']))
+
+            # Now we are going to start the task, import the defaults from
+            # the group config:
+            if self.config.config.has_section(group):
+                for k, v in self.config.config.items(group):
+                    if not k in task:
+                        task[k] = v
+
+            # and finally load defaults:
+            if self.config.config.has_section('task_defaults'):
+                for k, v in self.config.config.items('task_defaults'):
+                    if not k in task:
+                        task[k] = v
+
+            return task
+        except IndexError:
+            raise NoAvailableTasks()
 
 
     def getnexttask(self, group=None, new_state='running'):
-        ''' Get one available next task, as long as 'group' isn't overloaded '''
+        ''' Get one available next task, as long as 'group' isn't overloaded.
+            When the task is 'got', sets the state to new_state in the database.
+            So this can be used as an atomic action on tasks. '''
 
-        if len(self.tasks(group, 'running')) \
-                        < int(self.config.get(group, 'limit', 1)):
-            try:
-                task = self.tasks(group, 'ready')[0]
-                if new_state:
-                    task['state'] = new_state
-                    self.db.update(task, False, ('uid', '==', task['uid']))
+        if group:
+            running_tasks = self.active_groups()[group]['running']
+            group_limit = self.grouplimit(group)
 
-                # Now we are going to start the task, import the defaults from
-                # the group config:
-                if self.config.config.has_section(group):
-                    for k, v in self.config.config.items(group):
-                        if not k in task:
-                            task[k] = v
+            if running_tasks < group_limit:
+                return self._getnexttask(group, new_state)
+            else:
+                raise TooBusy()
 
-                # and finally load defaults:
-                if self.config.config.has_section('task_defaults'):
-                    for k, v in self.config.config.items('task_defaults'):
-                        if not k in task:
-                            task[k] = v
+        else: #no group specified.
 
-                return task
-            except IndexError:
+            all_groups = self.active_groups()
+
+            for groupname, grouptasks in all_groups.items():
+
+                # already at limit:
+                if grouptasks['running'] >= self.grouplimit(groupname):
+                    continue
+
+                # no ready tasks:
+                if grouptasks['ready'] == 0:
+                    continue
+
+                # we have a winner! (a group with available tasks)
+                return self._getnexttask(groupname, new_state)
+
+            # if there are no ready tasks at all, then raise that exception
+
+            if all((g['ready'] == 0 for g in all_groups.values())):
                 raise NoAvailableTasks()
-        else:
+
+            # otherwise, there are availible tasks, but we're too busy.
+
             raise TooBusy()
+
 
     def save(self, data):
         if 'state' not in data:
@@ -270,6 +327,8 @@ class TaskQueue(object):
         # And save it to the database.
 
         self.db.update(data, True, ('uid', '==', data['uid']))
+
+        return data
 
     def get(self, uid):
         return self.db.get(('uid', '==', uid))

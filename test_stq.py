@@ -39,7 +39,8 @@ def remove_config():
     if exists('__test'):
         rmtree('__test')
 
-
+def unicodify(d):
+    return {unicode(k): unicode(v) for k, v in d.items()}
 
 class BaseCaseClass_Config(BaseCase):
     ''' Module docstring:
@@ -154,6 +155,11 @@ class BaseCaseClass_TaskQueue(BaseCaseClass_Config):
         self.taskqueue.__exit__(0, 0, 0)
         remove_config()
 
+    def dbdump(self):
+        ''' useful for debugging '''
+        for line in self.taskqueue.db.db.iterdump():
+            print line
+
 
 class Test_TaskQueue_tasks(BaseCaseClass_TaskQueue):
     ''' Method docstring:
@@ -202,10 +208,14 @@ class Test_TaskQueue_active_groups(BaseCaseClass_TaskQueue):
     def test_multiple_tasks_with_one_group(self):
         ''' multiple tasks in one group, should be fine. '''
 
-        self.taskqueue.save({u'name': u'stuff', u'group': u'group1'})
-        self.taskqueue.save({u'name': u'stuff1', u'group': u'group1'})
-        self.taskqueue.save({u'name': u'stuff2', u'group': u'group1'})
-        self.taskqueue.save({u'name': u'stuff3', u'group': u'group1'})
+        data = [
+                {u'name': u'stuff', u'group': u'group1'},
+                {u'name': u'stuff1', u'group': u'group1'},
+                {u'name': u'stuff2', u'group': u'group1'},
+                {u'name': u'stuff3', u'group': u'group1'},
+            ]
+
+        [self.taskqueue.save(datum) for datum in data]
 
         self.assertEqual(self.taskqueue.active_groups(),
                          {u'group1': {u'ready': 4}})
@@ -214,11 +224,15 @@ class Test_TaskQueue_active_groups(BaseCaseClass_TaskQueue):
     def test_multiple_tasks_with_one_group_different_states(self):
         ''' multiple tasks in one group, but with different states '''
 
-        self.taskqueue.save({u'name': u'stuff', u'group': u'group1'})
-        self.taskqueue.save({u'name': u'stuff1', u'group': u'group1'})
-        self.taskqueue.save({u'name': u'stuff2', u'group': u'group1',
-                             u'state': u'failed'})
-        self.taskqueue.save({u'name': u'stuff3', u'group': u'group1'})
+        data = [
+
+                {u'name': u'stuff', u'group': u'group1'},
+                {u'name': u'stuff1', u'group': u'group1'},
+                {u'name': u'stuff2', u'group': u'group1', u'state': u'failed'},
+                {u'name': u'stuff3', u'group': u'group1'},
+            ]
+
+        [self.taskqueue.save(datum) for datum in data]
 
         self.assertEqual(self.taskqueue.active_groups(),
                          {u'group1': {u'ready': 3, u'failed': 1}})
@@ -226,10 +240,15 @@ class Test_TaskQueue_active_groups(BaseCaseClass_TaskQueue):
     def test_multiple_tasks_with_different_single_groups(self):
         ''' multiple tasks in one group, should be fine. '''
 
-        self.taskqueue.save({u'name': u'stuff', u'group': u'group1'})
-        self.taskqueue.save({u'name': u'stuff1', u'group': u'group2'})
-        self.taskqueue.save({u'name': u'stuff2', u'group': u'group1'})
-        self.taskqueue.save({u'name': u'stuff3', u'group': u'group2'})
+        data = [
+                {u'name': u'stuff', u'group': u'group1'},
+                {u'name': u'stuff1', u'group': u'group2'},
+                {u'name': u'stuff2', u'group': u'group1'},
+                {u'name': u'stuff3', u'group': u'group2'},
+            ]
+
+
+        [self.taskqueue.save(datum) for datum in data]
 
         self.assertEqual(self.taskqueue.active_groups(),
                          {u'group1': {u'ready': 2},
@@ -247,8 +266,18 @@ class Test_TaskQueue_active_groups(BaseCaseClass_TaskQueue):
                           u'group2': {u'ready': 1}})
 
 
+    def test_multiple_tasks_multiple_groups(self):
+        ''' only one task in the queue, but with multiple groups '''
 
+        self.taskqueue.save({u'name': u'stuff',
+                             u'group': [u'group1', u'group2']})
+        self.taskqueue.save({u'name': u'stuff',
+                             u'group': [u'group1', u'group3']})
 
+        self.assertEqual(self.taskqueue.active_groups(),
+                         {u'group1': {u'ready': 2},
+                          u'group2': {u'ready': 1},
+                          u'group3': {u'ready': 1}})
 
 
 
@@ -259,7 +288,6 @@ class Test_TaskQueue_getnexttask(BaseCaseClass_TaskQueue):
     Args: ['group', 'new_state']
     '''
     def test_empty_args(self):
-
         with self.assertRaises(stq.NoAvailableTasks):
             self.taskqueue.getnexttask()
 
@@ -267,6 +295,101 @@ class Test_TaskQueue_getnexttask(BaseCaseClass_TaskQueue):
     def test_all_zeros(self):
         with self.assertRaises(stq.NoAvailableTasks):
             self.taskqueue.getnexttask(0, 0)
+
+    def test_one_job(self):
+        task = {'name': 'read a book'}
+
+        sent = self.taskqueue.save(task)
+        # when we get a task, it is automatically set to be running.
+        sent['state'] = 'running'
+
+        self.assertDictContainsSubset(sent, self.taskqueue.getnexttask())
+
+        # Now there should be no free tasks
+
+        with self.assertRaises(stq.NoAvailableTasks):
+            self.taskqueue.getnexttask()
+
+        # now pretend it's finished:
+
+        sent['state'] = 'finished'
+        self.taskqueue.save(sent)
+
+        # and check again for a new error!
+
+        with self.assertRaises(stq.NoAvailableTasks):
+            self.taskqueue.getnexttask()
+
+
+
+    def test_two_tasks(self):
+        task = {'name': 'read a book'}
+        task2 = {'name': 'sing a song'}
+
+        sent = self.taskqueue.save(task)
+        sent2 = self.taskqueue.save(task2)
+
+        # when we get a task, it is automatically set to be running.
+        sent['state'] = 'running'
+        sent2['state'] = 'running'
+
+        # now get them back and test them:
+        self.assertDictContainsSubset(sent, self.taskqueue.getnexttask())
+
+        # Now there should be no free tasks
+        with self.assertRaises(stq.TooBusy):
+            self.taskqueue.getnexttask()
+
+        # say task is finished:
+        sent['state'] = 'finished'
+        self.taskqueue.save(sent)
+
+        # so now task2 is available:
+        self.assertDictContainsSubset(sent2, self.taskqueue.getnexttask())
+
+        # but NOW, there should be no tasks available:
+
+        with self.assertRaises(stq.NoAvailableTasks):
+            self.taskqueue.getnexttask()
+
+
+
+    def test_single_different_groups(self):
+        task = {'name': 'read a book', 'group': 'alpha'}
+        task2 = {'name': 'sing a song', 'group': 'beta'}
+
+        sent = self.taskqueue.save(task)
+        sent2 = self.taskqueue.save(task2)
+
+        # when we get a task, it is automatically set to be running.
+        sent['state'] = 'running'
+        sent2['state'] = 'running'
+
+        # now get them back and test them:
+        self.assertDictContainsSubset(sent, self.taskqueue.getnexttask())
+
+        # ALSO task2 is available:
+        self.assertDictContainsSubset(sent2, self.taskqueue.getnexttask())
+
+
+        # but NOW, there should be no tasks available:
+
+        with self.assertRaises(stq.NoAvailableTasks):
+            self.taskqueue.getnexttask()
+
+        # and check that even with tasks being finished, it's OK.
+
+        sent['state'] = 'finished'
+
+        self.taskqueue.save(sent)
+
+        with self.assertRaises(stq.NoAvailableTasks):
+            self.taskqueue.getnexttask()
+
+    def test_one_task_two_groups(self):
+
+        task = {'name': 'read a book', 'group': ['alpha', 'beta']}
+
 
 
 class Test_TaskQueue_save(BaseCaseClass_TaskQueue):
