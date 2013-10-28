@@ -39,7 +39,7 @@ import json
 from collections import defaultdict
 from sqlite3 import OperationalError
 
-from dictlitestore import DictLiteStore
+from dictlitestore import DictLiteStore, NoJSON
 
 valid_states = ('new', 'ready', 'running', 'done', 'failed', 'tmp', None)
 
@@ -175,7 +175,7 @@ class TaskQueue(object):
 
         q = []
         if group:
-            q.append(('group', '==', group))
+            q.append(('group', 'LIKE', NoJSON('%"' + group + '"%')))
         if state:
             q.append(('state', '==', state))
 
@@ -258,7 +258,8 @@ class TaskQueue(object):
                         task[k] = v
 
             return task
-        except IndexError:
+        except IndexError as err:
+            import pdb; pdb.set_trace()
             raise NoAvailableTasks()
 
 
@@ -304,6 +305,9 @@ class TaskQueue(object):
 
 
     def save(self, data):
+        ''' add needed fields if they're not there, and then save to the
+            database.  If the same uuid is already there, then update it. '''
+
         if 'state' not in data:
             data['state'] = 'ready'
 
@@ -331,6 +335,8 @@ class TaskQueue(object):
         return data
 
     def get(self, uid):
+        ''' get a task based of its uuid '''
+
         return self.db.get(('uid', '==', uid))
 
 ################################################################################

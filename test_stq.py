@@ -390,6 +390,11 @@ class Test_TaskQueue_getnexttask(BaseCaseClass_TaskQueue):
 
         task = {'name': 'read a book', 'group': ['alpha', 'beta']}
 
+        sent = self.taskqueue.save(task)
+
+        sent['state'] = 'running'
+
+        self.assertDictContainsSubset( sent, self.taskqueue.getnexttask())
 
 
 class Test_TaskQueue_save(BaseCaseClass_TaskQueue):
